@@ -88,15 +88,27 @@ public class WorkloadEngine {
     }
 
     public void triggerSpike() {
-        // Allocate a burst of large objects synchronously — guaranteed pause trigger
-        log.info("Spike triggered — allocating large object graph");
-        List<byte[]> spike = new ArrayList<>();
-        for (int i = 0; i < 50; i++) {
-            spike.add(new byte[1024 * 1024]); // 50 x 1MB = 50MB burst
+        log.info("Spike triggered — filling 60% of heap then releasing");
+        long maxHeap = Runtime.getRuntime().maxMemory();
+        long target  = (long) (maxHeap * 0.60);
+
+        List<byte[]> retained = new ArrayList<>();
+        long allocated = 0;
+        while (allocated < target) {
+            retained.add(new byte[10 * 1024 * 1024]); // 10MB chunks
+            allocated += 10 * 1024 * 1024;
         }
-        // Hold briefly so GC has to work to collect them
-        try { Thread.sleep(200); } catch (InterruptedException ignored) {}
-        spike.clear();
+
+        // Hold for 2s — GC cannot ignore this
+        try { Thread.sleep(2000); } catch (InterruptedException ignored) {}
+        retained.clear();
+
+        // Immediately stress during recovery
+        List<byte[]> recovery = new ArrayList<>();
+        for (int i = 0; i < 20; i++) {
+            recovery.add(new byte[10 * 1024 * 1024]); // 200MB burst
+        }
+        recovery.clear();
         log.info("Spike released");
     }
 
@@ -184,20 +196,20 @@ public class WorkloadEngine {
         // Large short-lived allocations
         List<byte[]> shortLived = new ArrayList<>();
         for (int i = 0; i < 10; i++) {
-            shortLived.add(new byte[500 * 1024]); // 500KB each = 5MB burst
+            shortLived.add(new byte[5 * 1024 * 1024]); // 5MB each = 50MB/cycle
         }
 
         // Grow long-lived set aggressively (fills old gen in G1GC → triggers Full GC)
-        if (longLivedObjects.size() < 200) {
-            longLivedObjects.add(new byte[500 * 1024]); // 500KB retained
+        if (longLivedObjects.size() < 400) {
+            longLivedObjects.add(new byte[2 * 1024 * 1024]); // 2MB retained
         } else {
             int evictCount = random.nextInt(10) + 1;
             for (int i = 0; i < evictCount && !longLivedObjects.isEmpty(); i++) {
                 longLivedObjects.remove(0);
             }
-            longLivedObjects.add(new byte[500 * 1024]);
+            longLivedObjects.add(new byte[2 * 1024 * 1024]);
         }
 
-        lastAllocatedBytes = (10L * 500 * 1024) + (500 * 1024);
+        lastAllocatedBytes = (10L * 5 * 1024 * 1024) + (2 * 1024 * 1024);
     }
 }
